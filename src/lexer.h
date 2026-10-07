@@ -41,6 +41,7 @@ typedef enum {
     LEX_UNCLOSED_DOUBLE, // не закрыта " 
     LEX_CONTINUATION, // ввод кончился на '\' + перевод строки
     LEX_UNSUPPORTED_OP, // оператор вне базы: <<, >&, &>, ...
+    LEX_UNSUPPORTED_FD_REDIR, // перенаправление с номером fd: 2>f
     LEX_NOMEM // не хватило памяти                
 } LexStatus;
 

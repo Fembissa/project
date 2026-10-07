@@ -1,5 +1,6 @@
 #include "lexer.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -131,14 +132,14 @@ static LexStatus read_operator(const char *s, TokenType *type, size_t *len)
 
 // читает одно слово, начиная с s[*pos], и складывает его текст
 // (уже без кавычек и экранирования) в buf. По выходу *pos указывает
-// на первый символ после слова.
+// на первый символ после слова
 
-// *cont_end - позиция конца последнего "\<перевод строки>";
-//нужна, чтобы заметить ввод, оборвавшийся на продолжении.
-
+// *cont_end позиция конца последнего "\<перевод строки>";
+//нужна, чтобы заметить ввод, оборвавшийся на продолжении
+// *plain станет false, если в слове были кавычки или '\'
 
 static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf, 
-    size_t *cont_end)
+    size_t *cont_end, bool *plain)
 {
     size_t i = *pos;
 
@@ -147,6 +148,7 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf,
 
         if (c == '\'') {
             // одинарные кавычки: всё буквально до следующей '
+            *plain = false;
             i++;
             while (s[i] != '\'') {
                 if (s[i] == '\0')
@@ -158,6 +160,7 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf,
             i++;
         } else if (c == '"') {
             // двойные кроме \" , '\\' и перевода строки        
+            *plain = false;
             i++;
             while (s[i] != '"') {
                 if (s[i] == '\0')
@@ -184,6 +187,7 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf,
             i++;
         } else if (c == '\\') {
             // '\' вне кавычек
+            *plain = false;
             char next = s[i + 1];
             if (next == '\n') { // продолжение строки
                 i += 2;
@@ -206,6 +210,36 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf,
 
     *pos = i;
     return LEX_OK;
+}
+// Похоже ли слово на номер дескриптора в перенаправлении: "2" или "{fd}".
+// Если сразу за ним (без пробела) идёт < или >, bash понял бы это как
+// "2>file". В базе этого нет, поэтому сообщаем об ошибке, а не передаём
+// "2" команде как аргумент.
+
+static bool is_fd_prefix(const char *w)
+{
+    size_t n = strlen(w);
+    if (n == 0)
+        return false;
+
+    bool all_digits = true;
+    for (size_t k = 0; k < n; k++) {
+        if (!isdigit((unsigned char)w[k]))
+            all_digits = false;
+    }
+    if (all_digits)
+        return true;
+
+    // {имя}: фигурные скобки вокруг идентификатора 
+    if (n > 2 && w[0] == '{' && w[n - 1] == '}' &&
+        !isdigit((unsigned char)w[1])) {
+        for (size_t k = 1; k < n - 1; k++) {
+            if (!isalnum((unsigned char)w[k]) && w[k] != '_')
+                return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 // главная функция
@@ -277,7 +311,11 @@ LexStatus lex(const char *s, TokenList *out)
 
         // иначе начинается слово
         StrBuf buf = {0};
-        st = read_word(s, &i, &buf, &cont_end);
+        bool plain = true;
+        st = read_word(s, &i, &buf, &cont_end, &plain);
+        if (st == LEX_OK && plain && (s[i] == '<' || s[i] == '>') &&
+            buf.data != NULL && is_fd_prefix(buf.data))
+            st = LEX_UNSUPPORTED_FD_REDIR;
         if (st != LEX_OK) {
             free(buf.data);
             goto fail;
@@ -311,6 +349,8 @@ const char *lex_status_message(LexStatus status)
         return "syntax error: unexpected EOF after line continuation";
     case LEX_UNSUPPORTED_OP:
         return "syntax error: unsupported operator";
+    case LEX_UNSUPPORTED_FD_REDIR:
+        return "syntax error: redirection with file descriptor is not supported";
     case LEX_NOMEM:
         return "out of memory";
     }
