@@ -129,7 +129,7 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf)
         char c = s[i];
 
         if (c == '\'') {
-            /* Одинарные кавычки: всё буквально до следующей '. */
+            // одинарные кавычки: всё буквально до следующей '
             i++;
             while (s[i] != '\'') {
                 if (s[i] == '\0')
@@ -138,7 +138,28 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf)
                     return LEX_NOMEM;
                 i++;
             }
-            i++; /* закрывающая кавычка */
+            i++;
+        } else if (c == '"') {
+            // двойные кроме \" и '\\'        
+            i++;
+            while (s[i] != '"') {
+                if (s[i] == '\0')
+                    return LEX_UNCLOSED_DOUBLE;
+                if (s[i] == '\\') {
+                    char next = s[i + 1];
+                    if (next == '"' || next == '\\') {
+                        if (!sb_push(buf, next))
+                            return LEX_NOMEM;
+                        i += 2;
+                        continue;
+                    }
+                    // иначе '\' - обычный символ, пойдёт в sb_push ниже
+                }
+                if (!sb_push(buf, s[i]))
+                    return LEX_NOMEM;
+                i++;
+            }
+            i++;
         } else {
             if (!sb_push(buf, c))
                 return LEX_NOMEM;
@@ -214,7 +235,7 @@ fail:
 }
 bool lex_status_is_incomplete(LexStatus status)
 {
-    return status == LEX_UNCLOSED_SINGLE;
+    return status == LEX_UNCLOSED_SINGLE || status == LEX_UNCLOSED_DOUBLE;
 }
 const char *lex_status_message(LexStatus status)
 {
@@ -223,6 +244,8 @@ const char *lex_status_message(LexStatus status)
         return "no error";
     case LEX_UNCLOSED_SINGLE:
         return "syntax error: unexpected EOF while looking for matching `''";
+    case LEX_UNCLOSED_DOUBLE:
+        return "syntax error: unexpected EOF while looking for matching `\"'";
     case LEX_NOMEM:
         return "out of memory";
     }

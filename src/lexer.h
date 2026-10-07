@@ -38,6 +38,7 @@ typedef struct {
 typedef enum {
     LEX_OK,
     LEX_UNCLOSED_SINGLE,      // не закрыта ' 
+    LEX_UNCLOSED_DOUBLE,      // не закрыта " 
     LEX_NOMEM  // не хватило памяти                
 } LexStatus;
 
