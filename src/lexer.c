@@ -118,10 +118,16 @@ static void read_operator(const char *s, TokenType *type, size_t *len)
 
 /// слова
 
-// Читает одно слово, начиная с s[*pos], и складывает его текст в buf.
-// По выходу *pos указывает на первый символ после слова.
+// читает одно слово, начиная с s[*pos], и складывает его текст
+// (уже без кавычек и экранирования) в buf. По выходу *pos указывает
+// на первый символ после слова.
 
-static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf)
+// *cont_end - позиция конца последнего "\<перевод строки>";
+//нужна, чтобы заметить ввод, оборвавшийся на продолжении.
+
+
+static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf, 
+    size_t *cont_end)
 {
     size_t i = *pos;
 
@@ -140,13 +146,18 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf)
             }
             i++;
         } else if (c == '"') {
-            // двойные кроме \" и '\\'        
+            // двойные кроме \" , '\\' и перевода строки        
             i++;
             while (s[i] != '"') {
                 if (s[i] == '\0')
                     return LEX_UNCLOSED_DOUBLE;
                 if (s[i] == '\\') {
                     char next = s[i + 1];
+                     if (next == '\n') {
+                        i += 2;
+                        *cont_end = i;
+                        continue;
+                    }
                     if (next == '"' || next == '\\') {
                         if (!sb_push(buf, next))
                             return LEX_NOMEM;
@@ -163,7 +174,10 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf)
         } else if (c == '\\') {
             // '\' вне кавычек
             char next = s[i + 1];
-            if (next == '\0') {  // '\' в самом конце - как в bash -c 
+            if (next == '\n') { // продолжение строки
+                i += 2;
+                *cont_end = i;
+            } else if (next == '\0') {  // '\' в самом конце - как в bash -c
                 if (!sb_push(buf, '\\'))
                     return LEX_NOMEM;
                 i++;
@@ -192,11 +206,19 @@ LexStatus lex(const char *s, TokenList *out)
     out->capacity = 0;
 
     size_t i = 0;
+    size_t cont_end = (size_t)-1;
     LexStatus st = LEX_OK;
 
     for (;;) {
         while (is_blank(s[i]))
             i++;
+        
+        // "\<перевод строки>" между лексемами - просто склейка строк
+        if (s[i] == '\\' && s[i + 1] == '\n') {
+            i += 2;
+            cont_end = i;
+            continue;
+        }
         
         // '#' в начале лексемы: комментарий до конца строки
         // сам '\n' завершит команду.
@@ -207,6 +229,11 @@ LexStatus lex(const char *s, TokenList *out)
         }
 
         if (s[i] == '\0') {
+            // ввод кончился сразу после "\<перевод строки>" команда не закончена. */
+            if (cont_end == i) {
+                st = LEX_CONTINUATION;
+                goto fail;
+            }
             if (!tl_push(out, TOK_EOF, NULL)) {
                 st = LEX_NOMEM;
                 goto fail;
@@ -237,7 +264,7 @@ LexStatus lex(const char *s, TokenList *out)
 
         // иначе начинается слово
         StrBuf buf = {0};
-        st = read_word(s, &i, &buf);
+        st = read_word(s, &i, &buf, &cont_end);
         if (st != LEX_OK) {
             free(buf.data);
             goto fail;
@@ -255,7 +282,8 @@ fail:
 }
 bool lex_status_is_incomplete(LexStatus status)
 {
-    return status == LEX_UNCLOSED_SINGLE || status == LEX_UNCLOSED_DOUBLE;
+    return status == LEX_UNCLOSED_SINGLE || status == LEX_UNCLOSED_DOUBLE ||
+        status == LEX_CONTINUATION;
 }
 const char *lex_status_message(LexStatus status)
 {
@@ -266,6 +294,8 @@ const char *lex_status_message(LexStatus status)
         return "syntax error: unexpected EOF while looking for matching `''";
     case LEX_UNCLOSED_DOUBLE:
         return "syntax error: unexpected EOF while looking for matching `\"'";
+    case LEX_CONTINUATION:
+        return "syntax error: unexpected EOF after line continuation";
     case LEX_NOMEM:
         return "out of memory";
     }

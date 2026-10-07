@@ -37,9 +37,10 @@ typedef struct {
 // результат работы лексера
 typedef enum {
     LEX_OK,
-    LEX_UNCLOSED_SINGLE,      // не закрыта ' 
-    LEX_UNCLOSED_DOUBLE,      // не закрыта " 
-    LEX_NOMEM  // не хватило памяти                
+    LEX_UNCLOSED_SINGLE, // не закрыта ' 
+    LEX_UNCLOSED_DOUBLE, // не закрыта " 
+    LEX_CONTINUATION, // ввод кончился на '\' + перевод строки
+    LEX_NOMEM // не хватило памяти                
 } LexStatus;
 
 LexStatus lex(const char *input, TokenList *out);
