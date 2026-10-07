@@ -197,6 +197,14 @@ LexStatus lex(const char *s, TokenList *out)
     for (;;) {
         while (is_blank(s[i]))
             i++;
+        
+        // '#' в начале лексемы: комментарий до конца строки
+        // сам '\n' завершит команду.
+        if (s[i] == '#') {
+            while (s[i] != '\0' && s[i] != '\n')
+                i++;
+            continue;
+        }
 
         if (s[i] == '\0') {
             if (!tl_push(out, TOK_EOF, NULL)) {
