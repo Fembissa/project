@@ -160,6 +160,18 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf)
                 i++;
             }
             i++;
+        } else if (c == '\\') {
+            // '\' вне кавычек
+            char next = s[i + 1];
+            if (next == '\0') {  // '\' в самом конце - как в bash -c 
+                if (!sb_push(buf, '\\'))
+                    return LEX_NOMEM;
+                i++;
+            } else {
+                if (!sb_push(buf, next))
+                    return LEX_NOMEM;
+                i += 2;
+            }
         } else {
             if (!sb_push(buf, c))
                 return LEX_NOMEM;
