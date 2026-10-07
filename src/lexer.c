@@ -88,12 +88,22 @@ static bool is_meta(char c)
 }
 
 // операторы
+// oператоры, которых нет в базе. Если ввод начинается с одного из них,
+// это ошибка 
+static const char *const UNSUPPORTED_OPS[] = {
+    "<<", "<>", "<&", ">&", ">|", "&>", "|&", ";;", ";&",
+};
 
 //Читает оператор в начале s. В *type кладёт его вид, в *len - длину.
 // сначала варианты (&&, ||, >>), потом односимвольные.
 
-static void read_operator(const char *s, TokenType *type, size_t *len)
+static LexStatus read_operator(const char *s, TokenType *type, size_t *len)
 {
+    for (size_t k = 0; k < sizeof UNSUPPORTED_OPS / sizeof *UNSUPPORTED_OPS; k++) {
+        if (strncmp(s, UNSUPPORTED_OPS[k], 2) == 0)
+            return LEX_UNSUPPORTED_OP;
+    }
+
     *len = 1;
     switch (s[0]) {
     case '|':
@@ -112,8 +122,9 @@ static void read_operator(const char *s, TokenType *type, size_t *len)
     case ';': *type = TOK_SEMI;    break;
     case '(': *type = TOK_LPAREN; break;
     case ')': *type = TOK_RPAREN; break;
-    default:  *type = TOK_EOF;     break; /* сюда попасть нельзя */
+     default:  return LEX_UNSUPPORTED_OP; // сюда попасть нельзя   
     }
+    return LEX_OK;
 }
 
 /// слова
@@ -253,7 +264,9 @@ LexStatus lex(const char *s, TokenList *out)
         if (is_meta(s[i])) {
             TokenType type;
             size_t len;
-            read_operator(s + i, &type, &len);
+            st = read_operator(s + i, &type, &len);
+            if (st != LEX_OK)
+                goto fail;
             if (!tl_push(out, type, NULL)) {
                 st = LEX_NOMEM;
                 goto fail;
@@ -296,6 +309,8 @@ const char *lex_status_message(LexStatus status)
         return "syntax error: unexpected EOF while looking for matching `\"'";
     case LEX_CONTINUATION:
         return "syntax error: unexpected EOF after line continuation";
+    case LEX_UNSUPPORTED_OP:
+        return "syntax error: unsupported operator";
     case LEX_NOMEM:
         return "out of memory";
     }
