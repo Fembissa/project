@@ -37,6 +37,7 @@ typedef struct {
 // результат работы лексера
 typedef enum {
     LEX_OK,
+    LEX_UNCLOSED_SINGLE,      // не закрыта ' 
     LEX_NOMEM  // не хватило памяти                
 } LexStatus;
 
@@ -44,6 +45,7 @@ LexStatus lex(const char *input, TokenList *out);
 
 // освобождает список лексем 
 void token_list_free(TokenList *list);
+bool lex_status_is_incomplete(LexStatus status);
 
 const char *lex_status_message(LexStatus status);
 

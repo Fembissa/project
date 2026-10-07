@@ -1,6 +1,7 @@
 #include "lexer.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 // работа со списком лексем
 
@@ -125,9 +126,24 @@ static LexStatus read_word(const char *s, size_t *pos, StrBuf *buf)
     size_t i = *pos;
 
     while (s[i] != '\0' && !is_meta(s[i])) {
-        if (!sb_push(buf, s[i]))
-            return LEX_NOMEM;
-        i++;
+        char c = s[i];
+
+        if (c == '\'') {
+            /* Одинарные кавычки: всё буквально до следующей '. */
+            i++;
+            while (s[i] != '\'') {
+                if (s[i] == '\0')
+                    return LEX_UNCLOSED_SINGLE;
+                if (!sb_push(buf, s[i]))
+                    return LEX_NOMEM;
+                i++;
+            }
+            i++; /* закрывающая кавычка */
+        } else {
+            if (!sb_push(buf, c))
+                return LEX_NOMEM;
+            i++;
+        }
     }
 
     *pos = i;
@@ -196,12 +212,17 @@ fail:
     token_list_free(out);
     return st;
 }
-
+bool lex_status_is_incomplete(LexStatus status)
+{
+    return status == LEX_UNCLOSED_SINGLE;
+}
 const char *lex_status_message(LexStatus status)
 {
     switch (status) {
     case LEX_OK:
         return "no error";
+    case LEX_UNCLOSED_SINGLE:
+        return "syntax error: unexpected EOF while looking for matching `''";
     case LEX_NOMEM:
         return "out of memory";
     }
