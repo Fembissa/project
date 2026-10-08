@@ -1,3 +1,7 @@
+//lexer.h - лексический анализ: превращает строку в массив лексем.
+
+//Лексер не выполняет системных вызовов и не знает грамматики. Он режет
+// текст на слова и операторы, снимает кавычки и убирает комментарии.
 #ifndef MY_LEXER_H
 #define MY_LEXER_H
 
@@ -7,7 +11,7 @@
 
 // виды лексем.
 typedef enum {
-    TOK_WORD, // слово
+    TOK_WORD, // слово (команда, аргумент, имя файла)
     TOK_PIPE, // | 
     TOK_AMP, // & 
     TOK_SEMI, // ;  
@@ -22,6 +26,7 @@ typedef enum {
     TOK_EOF // конец ввода
 } TokenType;
 
+//text заполнен только у TOK_WORD (кавычки уже сняты), иначе NULL
 typedef struct {
     TokenType type;
     char *text;
@@ -37,14 +42,14 @@ typedef struct {
 // результат работы лексера
 typedef enum {
     LEX_OK,
-    LEX_UNCLOSED_SINGLE, // не закрыта ' 
-    LEX_UNCLOSED_DOUBLE, // не закрыта " 
-    LEX_CONTINUATION, // ввод кончился на '\' + перевод строки
-    LEX_UNSUPPORTED_OP, // оператор вне базы: <<, >&, &>, ...
-    LEX_UNSUPPORTED_FD_REDIR, // перенаправление с номером fd: 2>f
-    LEX_NOMEM // не хватило памяти                
+    LEX_UNCLOSED_QUOTE, // не закрыта ' или "                   
+    LEX_CONTINUATION, // ввод кончился на '\' + перевод строки 
+    LEX_UNSUPPORTED, // вне базы: <<, >&, &>, 2>f и т. п. 
+    LEX_NOMEM // не хватило памяти              
 } LexStatus;
 
+//Разбирает строку input. При LEX_OK в out лежит список, оканчивающийся
+// TOK_EOF; его нужно освободить через token_list_free. При ошибке out пуст
 LexStatus lex(const char *input, TokenList *out);
 
 // освобождает список лексем 
