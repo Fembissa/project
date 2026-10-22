@@ -3,37 +3,20 @@
 #include <string.h>
 
 #include "lexer.h"
+#include "util.h"
 
 #define EXIT_SYNTAX 2 // код возврата при синтаксической ошибке
-#define READ_CHUNK 4096
 
-// читает весь стандартный ввод в одну строку 
-static char *read_all_stdin(void)
+// разбирает одну команду и печатает её лексемы; возвращает статус лексера
+static LexStatus dump_command(const char *text)
 {
-    size_t len = 0, cap = READ_CHUNK;
-    char *buf = malloc(cap);
-    if (buf == NULL)
-        return NULL;
-
-    size_t n;
-    while ((n = fread(buf + len, 1, cap - len - 1, stdin)) > 0) {
-        len += n;
-        if (cap - len < 2) {
-            char *p = realloc(buf, cap * 2);
-            if (p == NULL) {
-                free(buf);
-                return NULL;
-            }
-            buf = p;
-            cap *= 2;
-        }
+    TokenList tokens;
+    LexStatus st = lex(text, &tokens);
+    if (st == LEX_OK) {
+        token_list_dump(&tokens, stdout);
+        token_list_free(&tokens);
     }
-    if (ferror(stdin)) {
-        free(buf);
-        return NULL;
-    }
-    buf[len] = '\0';
-    return buf;
+    return st;
 }
 
 int main(int argc, char **argv)
@@ -57,25 +40,43 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    char *input = NULL;
-    if (command == NULL) {
-        input = read_all_stdin();
-        if (input == NULL) {
-            perror("mysh: stdin");
-            return EXIT_FAILURE;
+    LexStatus st = LEX_OK;
+    if (command != NULL) {
+        st = dump_command(command); // режим -c: одна команда
+    } else {
+        // Читаем stdin построчно. Если лексер сообщает, что ввод не закончен
+        // (незакрытая кавычка, '\' в конце строки), дописываем следующую
+        // строку к той же команде.
+        char *line = NULL;
+        size_t line_cap = 0;
+        char *input = NULL; // накопленный текст команды
+        size_t input_len = 0;
+
+        while (getline(&line, &line_cap, stdin) != -1) {
+            size_t n = strlen(line);
+            input = xrealloc(input, input_len + n + 1);
+            memcpy(input + input_len, line, n + 1);
+            input_len += n;
+
+            st = dump_command(input);
+            if (lex_status_is_incomplete(st))
+                continue; // команда не закончена: читаем следующую строку
+            if (st != LEX_OK)
+                break; // синтаксическая ошибка
+            input_len = 0; // команда разобрана, начинаем новую
         }
-        command = input;
+        if (ferror(stdin)) { // внутренняя ошибка чтения
+            perror("mysh: stdin");
+            exit(EXIT_FAILURE);
+        }
+        free(line);
+        free(input);
     }
 
-    TokenList tokens;
-    LexStatus st = lex(command, &tokens);
-    free(input);
-    if (st != LEX_OK) {
+    if (st != LEX_OK) { // включая ввод, оборвавшийся посреди команды
         fprintf(stderr, "mysh: %s\n", lex_status_message(st));
         return EXIT_SYNTAX;
     }
 
-    token_list_dump(&tokens, stdout);
-    token_list_free(&tokens);
     return EXIT_SUCCESS;
 }
