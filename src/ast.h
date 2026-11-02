@@ -14,6 +14,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 typedef struct Node Node;
 
@@ -96,5 +97,8 @@ void redirs_add(Redir **redirs, size_t *count, RedirType type, char *file);
 void pipeline_add(Node *n, Node *cmd);
 void andor_add(Node *n, AndOrOp op, Node *pipe);
 void list_add(Node *n, Node *item, bool background);
+
+// печатает дерево в читаемом виде (режим --dump-ast)
+void ast_dump(const Node *root, FILE *out);
 
 #endif

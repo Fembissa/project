@@ -31,23 +31,42 @@ static const char *const TOKEN_NAMES[] = {
     [TOK_NEWLINE] = "NEWLINE", [TOK_EOF] = "EOF",
 };
 
+void print_quoted(const char *text, FILE *out)
+{
+    fputc('"', out);
+    for (const char *p = text; *p; p++) {
+        if (*p == '"' || *p == '\\')
+            fputc('\\', out);
+        if (*p == '\n')
+            fputs("\\n", out);
+        else
+            fputc(*p, out);
+    }
+    fputc('"', out);
+}
+
 void token_list_dump(const TokenList *list, FILE *out)
 {
     for (size_t i = 0; i < list->count; i++) {
         const Token *t = &list->items[i];
         fputs(TOKEN_NAMES[t->type], out);
-        if (t->type == TOK_WORD) { // текст в кавычках, \ " \n экранируем
-            fputs(" \"", out);
-            for (const char *p = t->text; *p; p++) {
-                if (*p == '"' || *p == '\\')
-                    fputc('\\', out);
-                if (*p == '\n')
-                    fputs("\\n", out);
-                else
-                    fputc(*p, out);
-            }
-            fputc('"', out);
+        if (t->type == TOK_WORD) {
+            fputc(' ', out);
+            print_quoted(t->text, out);
         }
         fputc('\n', out);
     }
+}
+
+static const char *const TOKEN_SYMBOLS[] = {
+    [TOK_PIPE] = "|",      [TOK_AMP] = "&",       [TOK_SEMI] = ";",
+    [TOK_AND] = "&&",      [TOK_OR] = "||",       [TOK_LPAREN] = "(",
+    [TOK_RPAREN] = ")",    [TOK_LESS] = "<",      [TOK_GREAT] = ">",
+    [TOK_DGREAT] = ">>",   [TOK_NEWLINE] = "newline",
+    [TOK_EOF] = "end of input",
+};
+
+const char *token_text(const Token *t)
+{
+    return t->type == TOK_WORD ? t->text : TOKEN_SYMBOLS[t->type];
 }
