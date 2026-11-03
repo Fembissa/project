@@ -4,9 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "token.h"
 #include "util.h"
 
 static void redirs_free(Redir *redirs, size_t count);
+static void dump_indent(int depth, FILE *out);
+static void dump_redirs(const Redir *redirs, size_t count, int depth,
+                        FILE *out);
+static void dump_node(const Node *n, int depth, FILE *out);
 
 Node *node_new(NodeType type){
     Node *n = xmalloc(sizeof *n);
@@ -91,11 +96,81 @@ void list_add(Node *n, Node *item, bool background){
     l->count++;
 }
 
-// ниже вспомогательные (static) функции
+void ast_dump(const Node *root, FILE *out)
+{
+    dump_node(root, 0, out);
+}
 
 static void redirs_free(Redir *redirs, size_t count)
 {
     for (size_t i = 0; i < count; i++)
         free(redirs[i].file);
     free(redirs);
+}
+
+// отступ: два пробела на каждый уровень вложенности
+static void dump_indent(int depth, FILE *out)
+{
+    for (int i = 0; i < depth; i++)
+        fputs("  ", out);
+}
+
+static void dump_redirs(const Redir *redirs, size_t count, int depth,
+                        FILE *out)
+{
+    static const char *const SIGNS[] = {
+        [REDIR_IN] = "<", [REDIR_OUT] = ">", [REDIR_APPEND] = ">>",
+    };
+    for (size_t i = 0; i < count; i++) {
+        dump_indent(depth, out);
+        fprintf(out, "REDIR %s ", SIGNS[redirs[i].type]);
+        print_quoted(redirs[i].file, out);
+        fputc('\n', out);
+    }
+}
+
+// печатает узел, затем его детей на уровень глубже
+static void dump_node(const Node *n, int depth, FILE *out)
+{
+    dump_indent(depth, out);
+    switch (n->type) {
+    case NODE_SIMPLE:
+        fputs("SIMPLE", out);
+        for (size_t i = 0; i < n->simple.argc; i++) {
+            fputc(' ', out);
+            print_quoted(n->simple.argv[i], out);
+        }
+        fputc('\n', out);
+        dump_redirs(n->simple.redirs, n->simple.redir_count, depth + 1, out);
+        break;
+    case NODE_SUBSHELL:
+        fputs("SUBSHELL\n", out);
+        dump_node(n->subshell.body, depth + 1, out);
+        dump_redirs(n->subshell.redirs, n->subshell.redir_count, depth + 1,
+                    out);
+        break;
+    case NODE_PIPELINE:
+        fputs("PIPELINE\n", out);
+        for (size_t i = 0; i < n->pipeline.count; i++)
+            dump_node(n->pipeline.cmds[i], depth + 1, out);
+        break;
+    case NODE_ANDOR:
+        fputs("AND_OR\n", out);
+        for (size_t i = 0; i < n->andor.count; i++) {
+            if (i > 0) { // оператор печатаем между соседними командами
+                dump_indent(depth + 1, out);
+                fputs(n->andor.ops[i] == ANDOR_AND ? "AND\n" : "OR\n", out);
+            }
+            dump_node(n->andor.pipes[i], depth + 1, out);
+        }
+        break;
+    case NODE_LIST:
+        fputs("LIST\n", out);
+        for (size_t i = 0; i < n->list.count; i++) {
+            dump_indent(depth + 1, out);
+            fputs(n->list.background[i] ? "ITEM bg\n" : "ITEM fg\n", out);
+            dump_node(n->list.items[i], depth + 2, out);
+        }
+        break;
+    }
 }

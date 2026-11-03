@@ -32,12 +32,15 @@ typedef struct {
 
 // функции разбора и вспомогательные функции определены ниже
 static Node *parse_simple(Parser *p);
+static bool parse_redirection(Parser *p, Redir **redirs, size_t *count);
+static bool is_redir_op(TokenType type);
 static const Token *peek(const Parser *p);
 static bool check(const Parser *p, TokenType type);
 static bool at_end(const Parser *p);
 static void advance(Parser *p);
 static void skip_newlines(Parser *p);
 static void error_unexpected(Parser *p);
+
 
 // главная функция
 bool parse(const TokenList *tokens, Node **root, ParseError *err)
@@ -69,22 +72,63 @@ bool parse(const TokenList *tokens, Node **root, ParseError *err)
 
 // правила грамматики
 
-// simple = word { word }   (перенаправления добавим следующим коммитом)
+// simple = { redirection } word { word | redirection }
+// Слова и перенаправления могут идти вперемешку: "> out echo hi" - то же,
+// что "echo hi > out". Поэтому просто собираем всё подряд, пока попадаются
+// слова и знаки перенаправления.
 static Node *parse_simple(Parser *p)
 {
     Node *cmd = node_new(NODE_SIMPLE);
 
-    while (check(p, TOK_WORD)) {
-        simple_add_word(cmd, xstrdup(peek(p)->text));
-        advance(p);
+    for (;;) {
+        if (check(p, TOK_WORD)) {
+            simple_add_word(cmd, xstrdup(peek(p)->text));
+            advance(p);
+        } else if (is_redir_op(peek(p)->type)) {
+            if (!parse_redirection(p, &cmd->simple.redirs,
+                                   &cmd->simple.redir_count)) {
+                node_free(cmd);
+                return NULL;
+            }
+        } else {
+            break;
+        }
     }
 
-    if (cmd->simple.argc == 0) { // команда обязана содержать хотя бы слово
+    if (cmd->simple.argc == 0) { // ТЗ: команда обязана содержать слово
+        if (cmd->simple.redir_count > 0)
+            snprintf(p->err->message, sizeof p->err->message,
+                     "syntax error: redirection without a command");
+        else
+            error_unexpected(p);
         node_free(cmd);
-        error_unexpected(p);
+        
         return NULL;
     }
     return cmd;
+}
+
+// redirection = ("<" | ">" | ">>") word
+// Добавляет перенаправление в массив redirs; false - ошибка.
+static bool parse_redirection(Parser *p, Redir **redirs, size_t *count)
+{
+    TokenType op = peek(p)->type;
+    advance(p); // знак перенаправления
+
+    if (!check(p, TOK_WORD)) { // после знака обязано быть имя файла
+        error_unexpected(p);
+        return false;
+    }
+
+    RedirType type = REDIR_APPEND;
+    if (op == TOK_LESS)
+        type = REDIR_IN;
+    else if (op == TOK_GREAT)
+        type = REDIR_OUT;
+
+    redirs_add(redirs, count, type, xstrdup(peek(p)->text));
+    advance(p); // имя файла
+    return true;
 }
 
 //работа с лексемами
@@ -120,6 +164,11 @@ static void skip_newlines(Parser *p)
         advance(p);
 }
 
+static bool is_redir_op(TokenType type)
+{
+    return type == TOK_LESS || type == TOK_GREAT || type == TOK_DGREAT;
+}
+
 //ошибки 
 
 // "неожиданная лексема": печатаем, что именно встретилось
@@ -131,5 +180,5 @@ static void error_unexpected(Parser *p)
                  "syntax error: unexpected end of input");
     else
         snprintf(p->err->message, sizeof p->err->message,
-                 "syntax error near unexpected token `%d'", token_text(t));
+                 "syntax error near unexpected token `%s'", token_text(t));
 }

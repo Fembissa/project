@@ -44,4 +44,10 @@ void token_list_free(TokenList *list);
 //печатает лексемы по одной в строке 
 void token_list_dump(const TokenList *list, FILE *out);
 
+// печатает text в кавычках; " и \ экранируются, перевод строки - как \n
+void print_quoted(const char *text, FILE *out);
+
+// как лексема выглядела в исходном тексте (для сообщений об ошибках)
+const char *token_text(const Token *t);
+
 #endif
