@@ -4,16 +4,16 @@
 // грамматики есть своя функция parse_<правило>, а правила вызывают друг друга
 // сверху вниз - от самого "слабого" оператора к самому "сильному":
 //
-//   list        = and_or { (";" | "&" | перевод строки) [and_or] }
-//   and_or      = pipeline { ("&&" | "||") pipeline }
-//   pipeline    = command { "|" command }
-//   command     = simple | subshell
-//   subshell    = "(" list ")" { redirection }
-//   simple      = { redirection } word { word | redirection }
-//   redirection = ("<" | ">" | ">>") word
+// list = and_or { (";" | "&" | перевод строки) [and_or] }
+// and_or = pipeline { ("&&" | "||") pipeline }
+// pipeline = command { "|" command }
+// command = simple | subshell
+// subshell = "(" list ")" { redirection }
+// simple = { redirection } word { word | redirection }
+// redirection = ("<" | ">" | ">>") word
 //
 // Повторения {...} записаны циклами. Поэтому "a && b || c" разбирается как
-// "(a && b) || c" (левая ассоциативность, как требует ТЗ).
+// "(a && b) || c" (левая ассоциативность)
 //
 // Каждая функция parse_* возвращает узел дерева или NULL при ошибке; текст
 // ошибки пишется в p->err при первом обнаружении, дальше NULL просто
@@ -31,11 +31,13 @@ typedef struct {
 } Parser;
 
 // функции разбора и вспомогательные функции определены ниже
+static Node *parse_pipeline(Parser *p);
 static Node *parse_simple(Parser *p);
 static bool parse_redirection(Parser *p, Redir **redirs, size_t *count);
 static bool is_redir_op(TokenType type);
 static const Token *peek(const Parser *p);
 static bool check(const Parser *p, TokenType type);
+static bool match(Parser *p, TokenType type);
 static bool at_end(const Parser *p);
 static void advance(Parser *p);
 static void skip_newlines(Parser *p);
@@ -52,7 +54,7 @@ bool parse(const TokenList *tokens, Node **root, ParseError *err)
     Node *list = node_new(NODE_LIST);
     skip_newlines(&p);
     if (!at_end(&p)) {
-        Node *cmd = parse_simple(&p);
+        Node *cmd = parse_pipeline(&p);
         if (cmd == NULL) {
             node_free(list);
             return false;
@@ -71,6 +73,29 @@ bool parse(const TokenList *tokens, Node **root, ParseError *err)
 }
 
 // правила грамматики
+
+// pipeline = simple { "|" simple }
+// Если "|" нет, возвращаем саму команду без обёртки NODE_PIPELINE.
+static Node *parse_pipeline(Parser *p)
+{
+    Node *first = parse_simple(p);
+    if (first == NULL)
+        return NULL;
+    if (!check(p, TOK_PIPE))
+        return first;
+
+    Node *pipeline = node_new(NODE_PIPELINE);
+    pipeline_add(pipeline, first);
+    while (match(p, TOK_PIPE)) { // забрали "|" - после него нужна команда
+        Node *cmd = parse_simple(p);
+        if (cmd == NULL) {
+            node_free(pipeline);
+            return NULL;
+        }
+        pipeline_add(pipeline, cmd);
+    }
+    return pipeline;
+}
 
 // simple = { redirection } word { word | redirection }
 // Слова и перенаправления могут идти вперемешку: "> out echo hi" - то же,
@@ -95,7 +120,7 @@ static Node *parse_simple(Parser *p)
         }
     }
 
-    if (cmd->simple.argc == 0) { // ТЗ: команда обязана содержать слово
+    if (cmd->simple.argc == 0) { // команда обязана содержать слово
         if (cmd->simple.redir_count > 0)
             snprintf(p->err->message, sizeof p->err->message,
                      "syntax error: redirection without a command");
@@ -143,6 +168,16 @@ static const Token *peek(const Parser *p)
 static bool check(const Parser *p, TokenType type)
 {
     return peek(p)->type == type;
+}
+
+// если текущая лексема имеет вид type - забираем её и возвращаем true
+static bool match(Parser *p, TokenType type)
+{
+    if (check(p, type)) {
+        advance(p);
+        return true;
+    }
+    return false;
 }
 
 static bool at_end(const Parser *p)

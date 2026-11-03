@@ -1,8 +1,8 @@
 #!/bin/bash
 # Тесты парсера. Запуск из корня репозитория:  make && bash tests/test_parser.sh
 #
-#   ast 'ввод' 'дерево'   дерево - строки --dump-ast, склеенные через |
-#   bad 'ввод'            ожидаем синтаксическую ошибку: код 2, stdout пуст
+# ast 'ввод' 'дерево'   дерево - строки --dump-ast, склеенные через |
+# bad 'ввод' ожидаем синтаксическую ошибку: код 2, stdout пуст
 
 fail=0
 
@@ -30,11 +30,19 @@ ast '> out echo hi'     'LIST|  ITEM fg|    SIMPLE "echo" "hi"|      REDIR > "ou
 ast 'cat < in >> log'   'LIST|  ITEM fg|    SIMPLE "cat"|      REDIR < "in"|      REDIR >> "log"'
 ast 'wc <in x'          'LIST|  ITEM fg|    SIMPLE "wc" "x"|      REDIR < "in"'
 
+# конвейеры
+ast 'ls | wc -l'       'LIST|  ITEM fg|    PIPELINE|      SIMPLE "ls"|      SIMPLE "wc" "-l"'
+ast 'a | b | c'        'LIST|  ITEM fg|    PIPELINE|      SIMPLE "a"|      SIMPLE "b"|      SIMPLE "c"'
+ast 'cat <in | sort >out' 'LIST|  ITEM fg|    PIPELINE|      SIMPLE "cat"|        REDIR < "in"|      SIMPLE "sort"|        REDIR > "out"'
+
 # ошибки
-bad '> out'             # команды нет, только перенаправление
-bad 'echo >'            # нет имени файла
+bad '> out' # команды нет, только перенаправление
+bad 'echo >' # нет имени файла
 bad 'echo > > f'
 bad 'echo < < f'
+bad '| a'
+bad 'a |'
+bad 'a | | b'
 
 [ $fail -eq 0 ] && echo "all parser tests passed"
 exit $fail
