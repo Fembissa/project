@@ -40,6 +40,17 @@ ast 'a && b'           'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      AND|   
 ast 'a && b || c'      'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      AND|      SIMPLE "b"|      OR|      SIMPLE "c"'
 ast 'a || b | c && d'  'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      OR|      PIPELINE|        SIMPLE "b"|        SIMPLE "c"|      AND|      SIMPLE "d"'
 
+# списки: ; & и перевод строки (после & команда идёт в фон)
+ast 'a; b'             'LIST|  ITEM fg|    SIMPLE "a"|  ITEM fg|    SIMPLE "b"'
+ast 'a & b'            'LIST|  ITEM bg|    SIMPLE "a"|  ITEM fg|    SIMPLE "b"'
+ast 'sleep 1 &'        'LIST|  ITEM bg|    SIMPLE "sleep" "1"'
+ast 'a; b &'           'LIST|  ITEM fg|    SIMPLE "a"|  ITEM bg|    SIMPLE "b"'
+ast 'a;'               'LIST|  ITEM fg|    SIMPLE "a"'
+ast $'a\n\n b\n'       'LIST|  ITEM fg|    SIMPLE "a"|  ITEM fg|    SIMPLE "b"'
+ast 'a && b &'         'LIST|  ITEM bg|    AND_OR|      SIMPLE "a"|      AND|      SIMPLE "b"'
+ast 'a && b | c ; d &' 'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      AND|      PIPELINE|        SIMPLE "b"|        SIMPLE "c"|  ITEM bg|    SIMPLE "d"'
+ast $'\n'              'LIST'
+
 # ошибки
 bad '> out' # команды нет, только перенаправление
 bad 'echo >' # нет имени файла
@@ -51,6 +62,10 @@ bad 'a | | b'
 bad 'a &&'
 bad '&& a'
 bad 'a && || b'
+bad '; a'
+bad 'a ; ; b'
+bad 'a & ; b'
+bad '&'
 
 [ $fail -eq 0 ] && echo "all parser tests passed"
 exit $fail

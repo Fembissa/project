@@ -31,11 +31,13 @@ typedef struct {
 } Parser;
 
 // функции разбора и вспомогательные функции определены ниже
+static Node *parse_list(Parser *p);
 static Node *parse_and_or(Parser *p);
 static Node *parse_pipeline(Parser *p);
 static Node *parse_simple(Parser *p);
 static bool parse_redirection(Parser *p, Redir **redirs, size_t *count);
 static bool is_redir_op(TokenType type);
+static bool starts_command(TokenType type);
 static const Token *peek(const Parser *p);
 static bool check(const Parser *p, TokenType type);
 static bool match(Parser *p, TokenType type);
@@ -50,20 +52,11 @@ bool parse(const TokenList *tokens, Node **root, ParseError *err){
     Parser p = {tokens->items, tokens->count, 0, err};
     err->message[0] = '\0';
 
-    // ВРЕМЕННО
-    Node *list = node_new(NODE_LIST);
-    skip_newlines(&p);
-    if (!at_end(&p)) {
-        Node *cmd = parse_and_or(&p);
-        if (cmd == NULL) {
-            node_free(list);
-            return false;
-        }
-        list_add(list, cmd, false);
-        skip_newlines(&p);
-    }
+    Node *list = parse_list(&p);
+    if (list == NULL)
+        return false;
 
-    if (!at_end(&p)) { // после команды осталось что-то лишнее
+    if (!at_end(&p)) { // после списка осталось что-то лишнее: ")", ";;" ...
         error_unexpected(&p);
         node_free(list);
         return false;
@@ -73,6 +66,34 @@ bool parse(const TokenList *tokens, Node **root, ParseError *err){
 }
 
 // правила грамматики
+
+// list = and_or { (";" | "&" | перевод строки) [and_or] }
+// Каждая команда списка запоминает, стоял ли после неё "&" (запуск в фоне).
+// Разделитель ровно один: "a ; ; b" - ошибка (второй ";" не начинает
+// команду, цикл здесь заканчивается и parse() сообщает о лишней лексеме).
+// Пустые строки пропускаем. Пустой список - не ошибка (пустая строка ввода).
+static Node *parse_list(Parser *p){
+    Node *list = node_new(NODE_LIST);
+
+    for (;;) {
+        skip_newlines(p);
+        if (!starts_command(peek(p)->type))
+            break; // список кончился (конец ввода, ")" ...) - решит вызывающий
+
+        Node *item = parse_and_or(p);
+        if (item == NULL) {
+            node_free(list);
+            return NULL;
+        }
+
+        TokenType sep = peek(p)->type;
+        list_add(list, item, sep == TOK_AMP);
+        if (sep != TOK_SEMI && sep != TOK_AMP && sep != TOK_NEWLINE)
+            break; // разделителя нет - это была последняя команда
+        advance(p);
+    }
+    return list;
+}
 
 // and_or = pipeline { ("&&" | "||") pipeline }
 //
@@ -219,6 +240,11 @@ static void skip_newlines(Parser *p){
 
 static bool is_redir_op(TokenType type){
     return type == TOK_LESS || type == TOK_GREAT || type == TOK_DGREAT;
+}
+
+// с этой лексемы может начинаться команда
+static bool starts_command(TokenType type){
+    return type == TOK_WORD || is_redir_op(type);
 }
 
 //ошибки 
