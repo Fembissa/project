@@ -31,6 +31,7 @@ typedef struct {
 } Parser;
 
 // функции разбора и вспомогательные функции определены ниже
+static Node *parse_and_or(Parser *p);
 static Node *parse_pipeline(Parser *p);
 static Node *parse_simple(Parser *p);
 static bool parse_redirection(Parser *p, Redir **redirs, size_t *count);
@@ -45,8 +46,7 @@ static void error_unexpected(Parser *p);
 
 
 // главная функция
-bool parse(const TokenList *tokens, Node **root, ParseError *err)
-{
+bool parse(const TokenList *tokens, Node **root, ParseError *err){
     Parser p = {tokens->items, tokens->count, 0, err};
     err->message[0] = '\0';
 
@@ -54,7 +54,7 @@ bool parse(const TokenList *tokens, Node **root, ParseError *err)
     Node *list = node_new(NODE_LIST);
     skip_newlines(&p);
     if (!at_end(&p)) {
-        Node *cmd = parse_pipeline(&p);
+        Node *cmd = parse_and_or(&p);
         if (cmd == NULL) {
             node_free(list);
             return false;
@@ -74,10 +74,36 @@ bool parse(const TokenList *tokens, Node **root, ParseError *err)
 
 // правила грамматики
 
+// and_or = pipeline { ("&&" | "||") pipeline }
+//
+// Цикл вместо рекурсии даёт левую ассоциативность: в a && b || c операторы
+// выполняются слева направо, как "(a && b) || c". Дерево хранит просто
+// последовательность "a, &&, b, ||, c" - исполнитель пройдёт её по порядку.
+static Node *parse_and_or(Parser *p){
+    Node *first = parse_pipeline(p);
+    if (first == NULL)
+        return NULL;
+    if (!check(p, TOK_AND) && !check(p, TOK_OR))
+        return first;
+
+    Node *andor = node_new(NODE_ANDOR);
+    andor_add(andor, ANDOR_AND, first); // ops[0] не используется
+    while (check(p, TOK_AND) || check(p, TOK_OR)) {
+        AndOrOp op = check(p, TOK_AND) ? ANDOR_AND : ANDOR_OR;
+        advance(p); // забрали && или ||
+        Node *next = parse_pipeline(p);
+        if (next == NULL) {
+            node_free(andor);
+            return NULL;
+        }
+        andor_add(andor, op, next);
+    }
+    return andor;
+}
+
 // pipeline = simple { "|" simple }
 // Если "|" нет, возвращаем саму команду без обёртки NODE_PIPELINE.
-static Node *parse_pipeline(Parser *p)
-{
+static Node *parse_pipeline(Parser *p){
     Node *first = parse_simple(p);
     if (first == NULL)
         return NULL;
@@ -101,8 +127,7 @@ static Node *parse_pipeline(Parser *p)
 // Слова и перенаправления могут идти вперемешку: "> out echo hi" - то же,
 // что "echo hi > out". Поэтому просто собираем всё подряд, пока попадаются
 // слова и знаки перенаправления.
-static Node *parse_simple(Parser *p)
-{
+static Node *parse_simple(Parser *p){
     Node *cmd = node_new(NODE_SIMPLE);
 
     for (;;) {
@@ -135,8 +160,7 @@ static Node *parse_simple(Parser *p)
 
 // redirection = ("<" | ">" | ">>") word
 // Добавляет перенаправление в массив redirs; false - ошибка.
-static bool parse_redirection(Parser *p, Redir **redirs, size_t *count)
-{
+static bool parse_redirection(Parser *p, Redir **redirs, size_t *count){
     TokenType op = peek(p)->type;
     advance(p); // знак перенаправления
 
@@ -159,20 +183,17 @@ static bool parse_redirection(Parser *p, Redir **redirs, size_t *count)
 //работа с лексемами
 
 // текущая лексема (на неё смотрим, но не забираем)
-static const Token *peek(const Parser *p)
-{
+static const Token *peek(const Parser *p){
     return &p->tokens[p->pos];
 }
 
 // текущая лексема имеет вид type?
-static bool check(const Parser *p, TokenType type)
-{
+static bool check(const Parser *p, TokenType type){
     return peek(p)->type == type;
 }
 
 // если текущая лексема имеет вид type - забираем её и возвращаем true
-static bool match(Parser *p, TokenType type)
-{
+static bool match(Parser *p, TokenType type){
     if (check(p, type)) {
         advance(p);
         return true;
@@ -180,35 +201,30 @@ static bool match(Parser *p, TokenType type)
     return false;
 }
 
-static bool at_end(const Parser *p)
-{
+static bool at_end(const Parser *p){
     return check(p, TOK_EOF);
 }
 
 // переходит к следующей лексеме (за TOK_EOF не уходим)
-static void advance(Parser *p)
-{
+static void advance(Parser *p){
     if (!at_end(p))
         p->pos++;
 }
 
 // перевод строки между командами - то же, что пустые команды
-static void skip_newlines(Parser *p)
-{
+static void skip_newlines(Parser *p){
     while (check(p, TOK_NEWLINE))
         advance(p);
 }
 
-static bool is_redir_op(TokenType type)
-{
+static bool is_redir_op(TokenType type){
     return type == TOK_LESS || type == TOK_GREAT || type == TOK_DGREAT;
 }
 
 //ошибки 
 
 // "неожиданная лексема": печатаем, что именно встретилось
-static void error_unexpected(Parser *p)
-{
+static void error_unexpected(Parser *p){
     const Token *t = peek(p);
     if (t->type == TOK_EOF)
         snprintf(p->err->message, sizeof p->err->message,

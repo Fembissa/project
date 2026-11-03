@@ -35,6 +35,11 @@ ast 'ls | wc -l'       'LIST|  ITEM fg|    PIPELINE|      SIMPLE "ls"|      SIMP
 ast 'a | b | c'        'LIST|  ITEM fg|    PIPELINE|      SIMPLE "a"|      SIMPLE "b"|      SIMPLE "c"'
 ast 'cat <in | sort >out' 'LIST|  ITEM fg|    PIPELINE|      SIMPLE "cat"|        REDIR < "in"|      SIMPLE "sort"|        REDIR > "out"'
 
+# && и || (операторы идут слева направо, | связывает сильнее)
+ast 'a && b'           'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      AND|      SIMPLE "b"'
+ast 'a && b || c'      'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      AND|      SIMPLE "b"|      OR|      SIMPLE "c"'
+ast 'a || b | c && d'  'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      OR|      PIPELINE|        SIMPLE "b"|        SIMPLE "c"|      AND|      SIMPLE "d"'
+
 # ошибки
 bad '> out' # команды нет, только перенаправление
 bad 'echo >' # нет имени файла
@@ -43,6 +48,9 @@ bad 'echo < < f'
 bad '| a'
 bad 'a |'
 bad 'a | | b'
+bad 'a &&'
+bad '&& a'
+bad 'a && || b'
 
 [ $fail -eq 0 ] && echo "all parser tests passed"
 exit $fail
