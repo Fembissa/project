@@ -2,6 +2,7 @@
 #ifndef MY_TOKEN_H
 #define MY_TOKEN_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 
@@ -23,9 +24,15 @@ typedef enum {
 } TokenType;
 
 //text заполнен только у TOK_WORD (кавычки уже сняты), иначе NULL
+//Два признака нужны парсеру, потому что пробелы и кавычки в токенах уже
+//исчезли, а отличать "2>f" от "2 >f" и от "'2'>f" нужно:
+//  quoted - в слове были кавычки или '\'
+//  glued  - сразу за этой лексемой (без пробела) идёт следующая
 typedef struct {
     TokenType type;
     char *text;
+    bool quoted;
+    bool glued;
 } Token;
 
 //динамический массив лексем

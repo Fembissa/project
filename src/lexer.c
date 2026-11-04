@@ -14,7 +14,7 @@ static bool is_meta(char c);
 static void skip_blanks(const char *s, size_t *i, size_t *cont_end);
 static size_t read_operator(const char *s, TokenType *type);
 static LexStatus read_word(const char *s, size_t *pos, char *out,
-            size_t *cont_end);
+            size_t *cont_end, bool *quoted);
 
 // главная функция
 LexStatus lex(const char *s, TokenList *out)
@@ -26,10 +26,13 @@ LexStatus lex(const char *s, TokenList *out)
 
     size_t i = 0;
     size_t cont_end = (size_t)-1; // "склеек ещё не было"
+    size_t prev_end = 0; // где закончилась предыдущая лексема
     LexStatus st = LEX_OK;
 
     for (;;) {
         skip_blanks(s, &i, &cont_end);
+        if (out->count > 0) // ничего не пропущено - значит, лексемы вплотную
+            out->items[out->count - 1].glued = (i == prev_end);
         if (s[i] == '#') { // комментарий; '\n' не трогаем
             while (s[i] != '\0' && s[i] != '\n')
                 i++;
@@ -37,6 +40,7 @@ LexStatus lex(const char *s, TokenList *out)
 
         TokenType type = TOK_WORD;
         char *text = NULL;
+        bool quoted = false;
 
         if (s[i] == '\0') {
             if (cont_end == i) { // ввод оборвался на "\<перевод строки>"
@@ -51,12 +55,14 @@ LexStatus lex(const char *s, TokenList *out)
         } else if (is_meta(s[i])) {
             i += read_operator(s + i, &type);
         } else {
-            st = read_word(s, &i, word, &cont_end);
+            st = read_word(s, &i, word, &cont_end, &quoted);
             if (st != LEX_OK)
                 break;
             text = xstrdup(word);
         }
         token_list_push(out, type, text);
+        out->items[out->count - 1].quoted = quoted;
+        prev_end = i;
         if (type == TOK_EOF)
             break;
     }
@@ -141,6 +147,7 @@ static size_t read_operator(const char *s, TokenType *type)
 
 /// слова
 // Состояния при чтении слова
+
 typedef enum {
     WORD_PLAIN, // вне кавычек
     WORD_SINGLE, // внутри '...'
@@ -150,14 +157,14 @@ typedef enum {
 // Читает слово с позиции *pos и записывает его текст (без кавычек и
 // экранирования) в out. Буфер out должен быть не короче оставшегося
 // ввода: слово не бывает длиннее исходного текста
-
+// *quoted станет true, если в слове были кавычки или '\'
 // В зависимости от состояния символы читаются по-разному:
 // WORD_SINGLE : всё буквально до закрывающей кавычки;
 // WORD_DOUBLE : буквально, кроме \" и \\ ; "\<перевод строки>" убирается;
 // WORD_PLAIN  : '\' экранирует следующий символ; метасимвол кончает слово.
 
 static LexStatus read_word(const char *s, size_t *pos, char *out,
-            size_t *cont_end)
+            size_t *cont_end, bool *quoted)
 {
     size_t i = *pos;
     WordState state = WORD_PLAIN;
@@ -185,11 +192,13 @@ static LexStatus read_word(const char *s, size_t *pos, char *out,
             break;
         } else if (c == '\'') {
             state = WORD_SINGLE;
+            *quoted = true;
         } else if (c == '"') {
             state = WORD_DOUBLE;
+            *quoted = true;
         } else if (c == '\\' && s[i + 1] != '\0') {
             *out++ = s[++i];
-            
+            *quoted = true;
         } else {
             *out++ = c; // обычный символ (или '\' в самом конце ввода)
         }

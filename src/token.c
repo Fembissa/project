@@ -12,7 +12,7 @@ void token_list_push(TokenList *list, TokenType type, char *text)
         list->items = xrealloc(list->items,
                                list->capacity * sizeof *list->items);
     }
-    list->items[list->count++] = (Token){type, text};
+    list->items[list->count++] = (Token){.type = type, .text = text};
 }
 
 void token_list_free(TokenList *list)
