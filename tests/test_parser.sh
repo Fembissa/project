@@ -51,6 +51,13 @@ ast 'a && b &'         'LIST|  ITEM bg|    AND_OR|      SIMPLE "a"|      AND|   
 ast 'a && b | c ; d &' 'LIST|  ITEM fg|    AND_OR|      SIMPLE "a"|      AND|      PIPELINE|        SIMPLE "b"|        SIMPLE "c"|  ITEM bg|    SIMPLE "d"'
 ast $'\n'              'LIST'
 
+# подоболочки
+ast '(a; b)'           'LIST|  ITEM fg|    SUBSHELL|      LIST|        ITEM fg|          SIMPLE "a"|        ITEM fg|          SIMPLE "b"'
+ast '(a) > out | b'    'LIST|  ITEM fg|    PIPELINE|      SUBSHELL|        LIST|          ITEM fg|            SIMPLE "a"|        REDIR > "out"|      SIMPLE "b"'
+ast '((a))'            'LIST|  ITEM fg|    SUBSHELL|      LIST|        ITEM fg|          SUBSHELL|            LIST|              ITEM fg|                SIMPLE "a"'
+ast '(a) && (b) &'     'LIST|  ITEM bg|    AND_OR|      SUBSHELL|        LIST|          ITEM fg|            SIMPLE "a"|      AND|      SUBSHELL|        LIST|          ITEM fg|            SIMPLE "b"'
+ast $'(a\nb)'          'LIST|  ITEM fg|    SUBSHELL|      LIST|        ITEM fg|          SIMPLE "a"|        ITEM fg|          SIMPLE "b"'
+
 # ошибки
 bad '> out' # команды нет, только перенаправление
 bad 'echo >' # нет имени файла
@@ -66,6 +73,14 @@ bad '; a'
 bad 'a ; ; b'
 bad 'a & ; b'
 bad '&'
+bad '()'
+bad '( ; a)'
+bad '(a'
+bad 'a)'
+bad ')'
+bad '(a) b'
+bad 'a (b)'
+bad '(a) >'
 
 [ $fail -eq 0 ] && echo "all parser tests passed"
 exit $fail

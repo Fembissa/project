@@ -34,6 +34,8 @@ typedef struct {
 static Node *parse_list(Parser *p);
 static Node *parse_and_or(Parser *p);
 static Node *parse_pipeline(Parser *p);
+static Node *parse_command(Parser *p);
+static Node *parse_subshell(Parser *p);
 static Node *parse_simple(Parser *p);
 static bool parse_redirection(Parser *p, Redir **redirs, size_t *count);
 static bool is_redir_op(TokenType type);
@@ -41,6 +43,7 @@ static bool starts_command(TokenType type);
 static const Token *peek(const Parser *p);
 static bool check(const Parser *p, TokenType type);
 static bool match(Parser *p, TokenType type);
+static bool expect(Parser *p, TokenType type);
 static bool at_end(const Parser *p);
 static void advance(Parser *p);
 static void skip_newlines(Parser *p);
@@ -121,11 +124,10 @@ static Node *parse_and_or(Parser *p){
     }
     return andor;
 }
-
-// pipeline = simple { "|" simple }
+// pipeline = command { "|" command }
 // Если "|" нет, возвращаем саму команду без обёртки NODE_PIPELINE.
 static Node *parse_pipeline(Parser *p){
-    Node *first = parse_simple(p);
+    Node *first = parse_command(p);
     if (first == NULL)
         return NULL;
     if (!check(p, TOK_PIPE))
@@ -142,6 +144,45 @@ static Node *parse_pipeline(Parser *p){
         pipeline_add(pipeline, cmd);
     }
     return pipeline;
+}
+
+// command = simple | subshell
+// Что перед нами, видно по первой лексеме: "(" начинает подоболочку.
+static Node *parse_command(Parser *p){
+    if (check(p, TOK_LPAREN))
+        return parse_subshell(p);
+    return parse_simple(p);
+}
+
+// subshell = "(" list ")" { redirection }
+// Внутри скобок снова список - поэтому подоболочки вкладываются друг в друга
+// (рекурсия: parse_list -> ... -> parse_command -> parse_subshell -> parse_list).
+static Node *parse_subshell(Parser *p){
+    advance(p); // "("
+
+    Node *body = parse_list(p);
+    if (body == NULL)
+        return NULL;
+    if (body->list.count == 0) { // "()" - пустая подоболочка
+        error_unexpected(p);
+        node_free(body);
+        return NULL;
+    }
+    if (!expect(p, TOK_RPAREN)) { // не нашли закрывающую скобку
+        node_free(body);
+        return NULL;
+    }
+
+    Node *sub = node_new(NODE_SUBSHELL);
+    sub->subshell.body = body;
+    while (is_redir_op(peek(p)->type)) { // перенаправления на весь список
+        if (!parse_redirection(p, &sub->subshell.redirs,
+                               &sub->subshell.redir_count)) {
+            node_free(sub);
+            return NULL;
+        }
+    }
+    return sub;
 }
 
 // simple = { redirection } word { word | redirection }
@@ -222,6 +263,15 @@ static bool match(Parser *p, TokenType type){
     return false;
 }
 
+// забираем лексему type; если её нет - ошибка
+static bool expect(Parser *p, TokenType type)
+{
+    if (match(p, type))
+        return true;
+    error_unexpected(p);
+    return false;
+}
+
 static bool at_end(const Parser *p){
     return check(p, TOK_EOF);
 }
@@ -244,7 +294,7 @@ static bool is_redir_op(TokenType type){
 
 // с этой лексемы может начинаться команда
 static bool starts_command(TokenType type){
-    return type == TOK_WORD || is_redir_op(type);
+    return type == TOK_WORD || type == TOK_LPAREN || is_redir_op(type);
 }
 
 //ошибки 
