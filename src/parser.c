@@ -19,7 +19,9 @@
 // ошибки пишется в p->err при первом обнаружении, дальше NULL просто
 // передаётся вверх.
 #include "parser.h"
+#include <ctype.h>
 #include <stdio.h>
+#include <string.h>
 #include "util.h"
 
 // Состояние разбора: где мы находимся в массиве лексем.
@@ -40,7 +42,11 @@ static Node *parse_simple(Parser *p);
 static bool parse_redirection(Parser *p, Redir **redirs, size_t *count);
 static bool is_redir_op(TokenType type);
 static bool starts_command(TokenType type);
+static bool is_fd_redirect(const Parser *p);
+static bool looks_like_fd(const char *word);
+static bool starts_with(const char *s, const char *prefix);
 static const Token *peek(const Parser *p);
+static const Token *peek_at(const Parser *p, size_t k);
 static bool check(const Parser *p, TokenType type);
 static bool match(Parser *p, TokenType type);
 static bool expect(Parser *p, TokenType type);
@@ -48,6 +54,7 @@ static bool at_end(const Parser *p);
 static void advance(Parser *p);
 static void skip_newlines(Parser *p);
 static void error_unexpected(Parser *p);
+static void error_unsupported(Parser *p, const char *what);
 
 
 // главная функция
@@ -90,6 +97,15 @@ static Node *parse_list(Parser *p){
         }
 
         TokenType sep = peek(p)->type;
+        if (sep == TOK_AMP && peek(p)->glued) { // "&>file" и "&>>file"
+            TokenType next = peek_at(p, 1)->type;
+            if (next == TOK_GREAT || next == TOK_DGREAT) {
+                error_unsupported(p, "`&>'");
+                node_free(item);
+                node_free(list);
+                return NULL;
+            }
+        }
         list_add(list, item, sep == TOK_AMP);
         if (sep != TOK_SEMI && sep != TOK_AMP && sep != TOK_NEWLINE)
             break; // разделителя нет - это была последняя команда
@@ -194,6 +210,11 @@ static Node *parse_simple(Parser *p){
 
     for (;;) {
         if (check(p, TOK_WORD)) {
+            if (is_fd_redirect(p)) { // "2>f": слово-номер вплотную к > или <
+                error_unsupported(p, "redirection with file descriptor");
+                node_free(cmd);
+                return NULL;
+            }
             simple_add_word(cmd, xstrdup(peek(p)->text));
             advance(p);
         } else if (is_redir_op(peek(p)->type)) {
@@ -231,13 +252,24 @@ static bool parse_redirection(Parser *p, Redir **redirs, size_t *count){
         return false;
     }
 
+    if (is_fd_redirect(p)) { // ">2>f": после знака стоит номер дескриптора
+        error_unsupported(p, "redirection with file descriptor");
+        return false;
+    }
+
+    const char *file = peek(p)->text;
+    if (starts_with(file, "/dev/tcp/") || starts_with(file, "/dev/udp/")) {
+        error_unsupported(p, "redirection to /dev/tcp or /dev/udp");
+        return false;
+    }
+
     RedirType type = REDIR_APPEND;
     if (op == TOK_LESS)
         type = REDIR_IN;
     else if (op == TOK_GREAT)
         type = REDIR_OUT;
 
-    redirs_add(redirs, count, type, xstrdup(peek(p)->text));
+    redirs_add(redirs, count, type, xstrdup(file));
     advance(p); // имя файла
     return true;
 }
@@ -247,6 +279,13 @@ static bool parse_redirection(Parser *p, Redir **redirs, size_t *count){
 // текущая лексема (на неё смотрим, но не забираем)
 static const Token *peek(const Parser *p){
     return &p->tokens[p->pos];
+}
+
+// лексема на k позиций впереди (но не дальше TOK_EOF)
+static const Token *peek_at(const Parser *p, size_t k)
+{
+    size_t i = p->pos + k;
+    return &p->tokens[i < p->count ? i : p->count - 1];
 }
 
 // текущая лексема имеет вид type?
@@ -297,6 +336,41 @@ static bool starts_command(TokenType type){
     return type == TOK_WORD || type == TOK_LPAREN || is_redir_op(type);
 }
 
+// Номер дескриптора в "2>file" - слово из цифр (или "{имя}" в "{fd}>file"),
+// написанное без кавычек и вплотную к < или >. С пробелом ("2 >file") или
+// в кавычках ("'2'>file") это обычный аргумент. В базе таких перенаправлений
+// нет, поэтому парсер сообщает об ошибке.
+static bool is_fd_redirect(const Parser *p){
+    const Token *t = peek(p);
+    return !t->quoted && t->glued && is_redir_op(peek_at(p, 1)->type) &&
+           looks_like_fd(t->text);
+}
+
+// "2", "15" или "{имя}"
+static bool looks_like_fd(const char *word){
+    size_t n = strlen(word);
+    size_t k = 0;
+
+    while (k < n && isdigit((unsigned char)word[k]))
+        k++;
+    if (n > 0 && k == n) // только цифры
+        return true;
+
+    if (n > 2 && word[0] == '{' && word[n - 1] == '}' &&
+        !isdigit((unsigned char)word[1])) { // {имя}
+        for (k = 1; k < n - 1; k++) {
+            if (!isalnum((unsigned char)word[k]) && word[k] != '_')
+                return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool starts_with(const char *s, const char *prefix){
+    return strncmp(s, prefix, strlen(prefix)) == 0;
+}
+
 //ошибки 
 
 // "неожиданная лексема": печатаем, что именно встретилось
@@ -308,4 +382,11 @@ static void error_unexpected(Parser *p){
     else
         snprintf(p->err->message, sizeof p->err->message,
                  "syntax error near unexpected token `%s'", token_text(t));
+}
+
+// это ошибка, а не молчаливый пропуск
+static void error_unsupported(Parser *p, const char *what)
+{
+    snprintf(p->err->message, sizeof p->err->message,
+             "syntax error: %s is not supported", what);
 }

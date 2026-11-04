@@ -58,6 +58,15 @@ ast '((a))'            'LIST|  ITEM fg|    SUBSHELL|      LIST|        ITEM fg| 
 ast '(a) && (b) &'     'LIST|  ITEM bg|    AND_OR|      SUBSHELL|        LIST|          ITEM fg|            SIMPLE "a"|      AND|      SUBSHELL|        LIST|          ITEM fg|            SIMPLE "b"'
 ast $'(a\nb)'          'LIST|  ITEM fg|    SUBSHELL|      LIST|        ITEM fg|          SIMPLE "a"|        ITEM fg|          SIMPLE "b"'
 
+# число перед > - номер дескриптора ТОЛЬКО без кавычек и вплотную к знаку
+ast 'echo 2 >f'       'LIST|  ITEM fg|    SIMPLE "echo" "2"|      REDIR > "f"'
+ast "echo '2'>f"      'LIST|  ITEM fg|    SIMPLE "echo" "2"|      REDIR > "f"'
+ast 'echo "2">f'      'LIST|  ITEM fg|    SIMPLE "echo" "2"|      REDIR > "f"'
+ast 'echo \2>f'       'LIST|  ITEM fg|    SIMPLE "echo" "2"|      REDIR > "f"'
+ast 'echo a2>f'       'LIST|  ITEM fg|    SIMPLE "echo" "a2"|      REDIR > "f"'
+ast 'echo {fd} >f'    'LIST|  ITEM fg|    SIMPLE "echo" "{fd}"|      REDIR > "f"'
+ast 'a & >f b'        'LIST|  ITEM bg|    SIMPLE "a"|  ITEM fg|    SIMPLE "b"|      REDIR > "f"'
+
 # ошибки
 bad '> out' # команды нет, только перенаправление
 bad 'echo >' # нет имени файла
@@ -81,6 +90,27 @@ bad ')'
 bad '(a) b'
 bad 'a (b)'
 bad '(a) >'
+
+# конструкции вне базы (ТЗ: ошибка, команда не выполняется)
+bad 'echo hi 2>f'         # номер дескриптора
+bad 'echo hi 2>>f'
+bad 'echo hi 2>&1'
+bad '2>f echo hi'
+bad 'echo hi {fd}>f'
+bad 'echo >2>f'           # номер дескриптора сразу после знака
+bad 'echo >>{fd}>f'
+bad 'cat <<EOF'           # here-document
+bad 'cat <<<word'
+bad 'echo hi >&2'         # дублирование дескриптора
+bad 'echo hi >| f'
+bad 'cat <> f'
+bad 'echo hi &>f'         # stdout и stderr вместе
+bad 'echo hi &>>f'
+bad 'a |& b'
+bad 'a ;; b'
+bad 'a ;& b'
+bad 'echo hi >/dev/tcp/localhost/80'
+bad 'cat </dev/udp/host/53'
 
 [ $fail -eq 0 ] && echo "all parser tests passed"
 exit $fail
