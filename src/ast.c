@@ -1,4 +1,4 @@
-// ast.c - создание, заполнение и освобождение дерева команд (см. ast.h).
+// ast.c - создание, заполнение, освобождение и печать дерева
 #include "ast.h"
 
 #include <stdlib.h>
@@ -7,11 +7,10 @@
 #include "token.h"
 #include "util.h"
 
-static void redirs_free(Redir *redirs, size_t count);
-static void dump_indent(int depth, FILE *out);
-static void dump_redirs(const Redir *redirs, size_t count, int depth,
-                        FILE *out);
+static void redirs_free(RedirList *redirs);
 static void dump_node(const Node *n, int depth, FILE *out);
+static void dump_redirs(const RedirList *redirs, int depth, FILE *out);
+static void dump_indent(int depth, FILE *out);
 
 Node *node_new(NodeType type){
     Node *n = xmalloc(sizeof *n);
@@ -29,28 +28,21 @@ void node_free(Node *n){
         for (size_t i = 0; i < n->simple.argc; i++)
             free(n->simple.argv[i]);
         free(n->simple.argv);
-        redirs_free(n->simple.redirs, n->simple.redir_count);
+        redirs_free(&n->simple.redirs);
         break;
     case NODE_SUBSHELL:
         node_free(n->subshell.body);
-        redirs_free(n->subshell.redirs, n->subshell.redir_count);
+        redirs_free(&n->subshell.redirs);
         break;
     case NODE_PIPELINE:
-        for (size_t i = 0; i < n->pipeline.count; i++)
-            node_free(n->pipeline.cmds[i]);
-        free(n->pipeline.cmds);
-        break;
+        
     case NODE_ANDOR:
-        for (size_t i = 0; i < n->andor.count; i++)
-            node_free(n->andor.pipes[i]);
-        free(n->andor.pipes);
-        free(n->andor.ops);
-        break;
+        
     case NODE_LIST:
-        for (size_t i = 0; i < n->list.count; i++)
-            node_free(n->list.items[i]);
-        free(n->list.items);
-        free(n->list.background);
+        for (size_t i = 0; i < n->seq.count; i++)
+            node_free(n->seq.items[i]);
+        free(n->seq.items);
+        free(n->seq.ops);
         break;
     }
     free(n);
@@ -66,72 +58,55 @@ void simple_add_word(Node *n, char *word){
     s->argv[s->argc] = NULL; // завершающий NULL для execvp
 }
 
-void redirs_add(Redir **redirs, size_t *count, RedirType type, char *file){
-    *redirs = xrealloc(*redirs, (*count + 1) * sizeof **redirs);
-    (*redirs)[(*count)++] = (Redir){type, file};
+void redirs_add(RedirList *redirs, RedirType type, char *file){
+    redirs->items = xrealloc(redirs->items,
+                             (redirs->count + 1) * sizeof *redirs->items);
+    redirs->items[redirs->count++] = (Redir){.type = type, .file = file};
 }
 
-void pipeline_add(Node *n, Node *cmd){
-    Pipeline *p = &n->pipeline;
-    p->cmds = xrealloc(p->cmds, (p->count + 1) * sizeof *p->cmds);
-    p->cmds[p->count++] = cmd;
+void seq_add(Node *n, Node *item, Op op){
+    Sequence *s = &n->seq;
+    s->items = xrealloc(s->items, (s->count + 1) * sizeof *s->items);
+    s->ops = xrealloc(s->ops, (s->count + 1) * sizeof *s->ops);
+    s->items[s->count] = item;
+    s->ops[s->count++] = op;
 }
 
-void andor_add(Node *n, AndOrOp op, Node *pipe){
-    AndOr *a = &n->andor;
-    a->pipes = xrealloc(a->pipes, (a->count + 1) * sizeof *a->pipes);
-    a->ops = xrealloc(a->ops, (a->count + 1) * sizeof *a->ops);
-    a->pipes[a->count] = pipe;
-    a->ops[a->count] = op;
-    a->count++;
-}
-
-void list_add(Node *n, Node *item, bool background){
-    CommandList *l = &n->list;
-    l->items = xrealloc(l->items, (l->count + 1) * sizeof *l->items);
-    l->background = xrealloc(l->background,
-                             (l->count + 1) * sizeof *l->background);
-    l->items[l->count] = item;
-    l->background[l->count] = background;
-    l->count++;
-}
-
-void ast_dump(const Node *root, FILE *out)
-{
+void ast_dump(const Node *root, FILE *out){
     dump_node(root, 0, out);
 }
 
-static void redirs_free(Redir *redirs, size_t count)
-{
-    for (size_t i = 0; i < count; i++)
-        free(redirs[i].file);
-    free(redirs);
+static void redirs_free(RedirList *redirs){
+    for (size_t i = 0; i < redirs->count; i++)
+        free(redirs->items[i].file);
+    free(redirs->items);
 }
 
 // отступ: два пробела на каждый уровень вложенности
-static void dump_indent(int depth, FILE *out)
-{
+static void dump_indent(int depth, FILE *out){
     for (int i = 0; i < depth; i++)
         fputs("  ", out);
 }
 
-static void dump_redirs(const Redir *redirs, size_t count, int depth,
-                        FILE *out)
-{
+static void dump_redirs(const RedirList *redirs, int depth, FILE *out){
     static const char *const SIGNS[] = {
         [REDIR_IN] = "<", [REDIR_OUT] = ">", [REDIR_APPEND] = ">>",
     };
-    for (size_t i = 0; i < count; i++) {
+    for (size_t i = 0; i < redirs->count; i++) {
         dump_indent(depth, out);
-        fprintf(out, "REDIR %s ", SIGNS[redirs[i].type]);
-        print_quoted(redirs[i].file, out);
+        fprintf(out, "REDIR %s ", SIGNS[redirs->items[i].type]);
+        print_quoted(redirs->items[i].file, out);
         fputc('\n', out);
     }
 }
 
 // печатает узел, затем его детей на уровень глубже
-static void dump_node(const Node *n, int depth, FILE *out)
-{
+static void dump_node(const Node *n, int depth, FILE *out){
+    static const char *const TITLES[] = {
+        [NODE_PIPELINE] = "PIPELINE", [NODE_ANDOR] = "AND_OR",
+        [NODE_LIST] = "LIST",
+    };
+
     dump_indent(depth, out);
     switch (n->type) {
     case NODE_SIMPLE:
@@ -141,35 +116,32 @@ static void dump_node(const Node *n, int depth, FILE *out)
             print_quoted(n->simple.argv[i], out);
         }
         fputc('\n', out);
-        dump_redirs(n->simple.redirs, n->simple.redir_count, depth + 1, out);
+        dump_redirs(&n->simple.redirs, depth + 1, out);
         break;
     case NODE_SUBSHELL:
         fputs("SUBSHELL\n", out);
         dump_node(n->subshell.body, depth + 1, out);
-        dump_redirs(n->subshell.redirs, n->subshell.redir_count, depth + 1,
-                    out);
+        dump_redirs(&n->subshell.redirs, depth + 1, out);
         break;
     case NODE_PIPELINE:
-        fputs("PIPELINE\n", out);
-        for (size_t i = 0; i < n->pipeline.count; i++)
-            dump_node(n->pipeline.cmds[i], depth + 1, out);
-        break;
+        
     case NODE_ANDOR:
-        fputs("AND_OR\n", out);
-        for (size_t i = 0; i < n->andor.count; i++) {
-            if (i > 0) { // оператор печатаем между соседними командами
-                dump_indent(depth + 1, out);
-                fputs(n->andor.ops[i] == ANDOR_AND ? "AND\n" : "OR\n", out);
-            }
-            dump_node(n->andor.pipes[i], depth + 1, out);
-        }
-        break;
+        
     case NODE_LIST:
-        fputs("LIST\n", out);
-        for (size_t i = 0; i < n->list.count; i++) {
-            dump_indent(depth + 1, out);
-            fputs(n->list.background[i] ? "ITEM bg\n" : "ITEM fg\n", out);
-            dump_node(n->list.items[i], depth + 2, out);
+        fprintf(out, "%s\n", TITLES[n->type]);
+        for (size_t i = 0; i < n->seq.count; i++) {
+            Op op = n->seq.ops[i];
+            if (n->type == NODE_LIST) {
+                dump_indent(depth + 1, out);
+                fputs(op == OP_BG ? "ITEM bg\n" : "ITEM fg\n", out);
+                dump_node(n->seq.items[i], depth + 2, out);
+            } else {
+                dump_node(n->seq.items[i], depth + 1, out);
+                if (op == OP_AND || op == OP_OR) { // оператор между соседями
+                    dump_indent(depth + 1, out);
+                    fputs(op == OP_AND ? "AND\n" : "OR\n", out);
+                }
+            }
         }
         break;
     }

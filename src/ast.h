@@ -1,14 +1,14 @@
 // ast.h - дерево команд (AST): результат работы парсера.
-// Узлов пять видов. Простая команда и подоболочка - "листья команд",
-// остальные три собирают их в более крупные конструкции:
+// Узлов пять видов:
 // NODE_SIMPLE ls -l > out слова и перенаправления
 // NODE_SUBSHELL  ( список ) > out список в отдельном процессе
 // NODE_PIPELINE  cmd1 | cmd2 | cmd3 конвейер
 // NODE_ANDOR p1 && p2 || p3 цепочка по коду возврата
 // NODE_LIST a ; b & c  список (корень дерева)
 //
-// Если конвейер состоит из одной команды, отдельный узел NODE_PIPELINE
-// не создаётся (то же с NODE_ANDOR): в дереве лежит сама команда.
+// Три последних устроены одинаково: это последовательность элементов
+// с операторами между ними (структура Sequence). Если в конвейере (или цепочке)
+// всего один элемент, отдельный узел не создаётся: в дереве лежит сам элемент.
 #ifndef MY_AST_H
 #define MY_AST_H
 
@@ -26,8 +26,43 @@ typedef struct {
     char *file;
 } Redir;
 
-// операторы цепочки
-typedef enum { ANDOR_AND, ANDOR_OR } AndOrOp;
+typedef struct {
+    Redir *items; // в порядке записи
+    size_t count;
+} RedirList;
+
+// Оператор, который стоит ПОСЛЕ элемента последовательности.
+typedef enum {
+    OP_NONE, // после элемента ничего нет (последний элемент)
+    OP_PIPE, // |
+    OP_AND, // &&
+    OP_OR, // ||
+    OP_SEMI, // ; или перевод строки
+    OP_BG // & (элемент запускается в фоне)
+} Op;
+
+// ls -l > out
+typedef struct {
+    char **argv; // слова; argv[argc] == NULL (так удобно для execvp)
+    size_t argc;
+    RedirList redirs;
+} SimpleCommand;
+
+// ( список ) > out
+typedef struct {
+    Node *body; // узел NODE_LIST
+    RedirList redirs; // относятся ко всему списку
+} Subshell;
+
+// Элементы items[i] и оператор ops[i] после каждого из них:
+// NODE_PIPELINE ops[i] - OP_PIPE (у последнего OP_NONE)
+// NODE_ANDOR ops[i] - OP_AND или OP_OR между items[i] и items[i+1]
+// NODE_LIST ops[i] - OP_SEMI, OP_BG или OP_NONE (нет разделителя)
+typedef struct {
+    Node **items;
+    Op *ops;
+    size_t count;
+} Sequence;
 
 typedef enum {
     NODE_SIMPLE,
@@ -37,50 +72,13 @@ typedef enum {
     NODE_LIST
 } NodeType;
 
-// ls -l > out
-typedef struct {
-    char **argv; // слова; argv[argc] == NULL (так удобно для execvp)
-    size_t argc;
-    Redir *redirs; // перенаправления в порядке записи
-    size_t redir_count;
-} SimpleCommand;
-
-// ( список ) > out
-typedef struct {
-    Node *body; // узел NODE_LIST
-    Redir *redirs;
-    size_t redir_count;
-} Subshell;
-
-// cmd1 | cmd2 | cmd3
-typedef struct {
-    Node **cmds; // NODE_SIMPLE или NODE_SUBSHELL
-    size_t count;
-} Pipeline;
-
-// p1 && p2 || p3
-typedef struct {
-    Node **pipes; // NODE_PIPELINE, NODE_SIMPLE или NODE_SUBSHELL
-    AndOrOp *ops; // ops[i] стоит перед pipes[i]; ops[0] не используется
-    size_t count;
-} AndOr;
-
-// a ; b & c
-typedef struct {
-    Node **items; // что выполнять
-    bool *background; // background[i] == true, если после items[i] стоит &
-    size_t count;
-} CommandList;
-
 // Узел дерева: вид + данные нужного вида (поля union занимают одно место)
 struct Node {
     NodeType type;
     union {
         SimpleCommand simple;
         Subshell subshell;
-        Pipeline pipeline;
-        AndOr andor;
-        CommandList list;
+        Sequence seq; // NODE_PIPELINE, NODE_ANDOR, NODE_LIST
     };
 };
 
@@ -90,13 +88,10 @@ Node *node_new(NodeType type);
 // освобождает узел и всё, что в нём лежит (рекурсивно)
 void node_free(Node *n);
 
-// добавление в конец; владение word, file и вложенными узлами
-// переходит к дереву
+// добавление в конец; владение word, file и item переходит к дереву
 void simple_add_word(Node *n, char *word);
-void redirs_add(Redir **redirs, size_t *count, RedirType type, char *file);
-void pipeline_add(Node *n, Node *cmd);
-void andor_add(Node *n, AndOrOp op, Node *pipe);
-void list_add(Node *n, Node *item, bool background);
+void redirs_add(RedirList *redirs, RedirType type, char *file);
+void seq_add(Node *n, Node *item, Op op);
 
 // печатает дерево в читаемом виде (режим --dump-ast)
 void ast_dump(const Node *root, FILE *out);
