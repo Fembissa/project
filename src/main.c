@@ -4,6 +4,7 @@
 
 #include "lexer.h"
 #include "parser.h"
+#include "exec.h"
 
 #define EXIT_SYNTAX 2 // код возврата при синтаксической ошибке
 #define ERROR_LEN 160 // место под текст ошибки
@@ -42,7 +43,8 @@ static CmdStatus process_command(const char *text, Mode mode, char *err)
         return perr.incomplete ? CMD_INCOMPLETE : CMD_ERROR;
     }
 
-    ast_dump(root, stdout);
+    int exit_code = exec_node(root);
+    (void)exit_code;
     node_free(root);
     return CMD_OK;
 }
