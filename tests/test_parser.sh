@@ -112,5 +112,19 @@ bad 'a ;& b'
 bad 'echo hi >/dev/tcp/localhost/80'
 bad 'cat </dev/udp/host/53'
 
+# ввод из stdin: команда на нескольких строках (подоболочка) - одна команда
+in_ast() {
+    got=$(printf '%b' "$1" | ./mysh --dump-ast 2>&1 | tr '\n' '|')
+    got=${got%|}
+    [ "$got" = "$2" ] || { echo "FAIL (stdin): $1"; echo "  want: $2"; echo "  got:  $got"; fail=1; }
+}
+in_ast '(\na\n)\n'   'LIST|  ITEM fg|    SUBSHELL|      LIST|        ITEM fg|          SIMPLE "a"'
+in_ast 'a\nb\n'      'LIST|  ITEM fg|    SIMPLE "a"|LIST|  ITEM fg|    SIMPLE "b"'
+# ... а если ввод кончился посреди команды - ошибка
+for text in '(a\n' 'a |\n' '(\n'; do
+    printf '%b' "$text" | ./mysh --dump-ast >/dev/null 2>&1
+    [ $? -eq 2 ] || { echo "FAIL (expected exit code 2 at end of stdin): $text"; fail=1; }
+done
+
 [ $fail -eq 0 ] && echo "all parser tests passed"
 exit $fail

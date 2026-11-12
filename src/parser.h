@@ -15,6 +15,7 @@
 // текст диагностики (без префикса "mysh: ")
 typedef struct {
     char message[PARSE_ERROR_LEN];
+    bool incomplete; // ввод оборвался посреди команды: можно дочитать строку
 } ParseError;
 
 // Строит дерево по списку лексем (он оканчивается TOK_EOF).

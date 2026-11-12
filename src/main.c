@@ -40,7 +40,7 @@ static CmdStatus process_command(const char *text, Mode mode, char *err)
     token_list_free(&tokens);
     if (!ok) {
         snprintf(err, ERROR_LEN, "%s", perr.message);
-        return CMD_ERROR;
+        return perr.incomplete ? CMD_INCOMPLETE : CMD_ERROR;
     }
 
     ast_dump(root, stdout);

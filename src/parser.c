@@ -57,6 +57,7 @@ static void fail_unexpected(Parser *p);
 bool parse(const TokenList *tokens, Node **root, ParseError *err){
     Parser p = {tokens->items, 0, err};
     err->message[0] = '\0';
+    err->incomplete = false;
 
     Node *list = parse_list(&p);
     if (!check(&p, TOK_EOF)) // после списка осталось лишнее: ")", ";;" ...
@@ -293,8 +294,12 @@ static void fail_unexpected(Parser *p){
     const Token *t = peek(p);
     char message[PARSE_ERROR_LEN];
 
-    if (t->type == TOK_EOF)
+    if (t->type == TOK_EOF) {
+        // ввод кончился там, где нужно продолжение: "(", "a |", "(a" ...
+        if (p->err->message[0] == '\0')
+            p->err->incomplete = true;
         snprintf(message, sizeof message, "syntax error: unexpected end of input");
+    }
     else
         snprintf(message, sizeof message,
                  "syntax error near unexpected token `%s'", token_text(t));
