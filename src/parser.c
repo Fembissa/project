@@ -22,7 +22,7 @@
 
 #include <stdio.h>
 #include <string.h>
-#include "util.h"
+#include "lexer.h"
 
 #define DIGITS "0123456789"
 #define IDENT_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_" DIGITS

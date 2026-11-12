@@ -5,7 +5,7 @@
 #include <string.h>
 
 #include "token.h"
-#include "util.h"
+#include "lexer.h"
 
 static void redirs_free(RedirList *redirs);
 static void dump_node(const Node *n, int depth, FILE *out);

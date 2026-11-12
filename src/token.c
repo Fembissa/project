@@ -2,8 +2,7 @@
 #include "token.h"
 
 #include <stdlib.h>
-
-#include "util.h"
+#include "lexer.h"
 
 void token_list_push(TokenList *list, TokenType type, char *text)
 {

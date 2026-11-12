@@ -4,7 +4,6 @@
 
 #include "lexer.h"
 #include "parser.h"
-#include "util.h"
 
 #define EXIT_SYNTAX 2 // код возврата при синтаксической ошибке
 #define ERROR_LEN 160 // место под текст ошибки

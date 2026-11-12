@@ -20,9 +20,10 @@ typedef enum {
 //Разбирает строку input. При LEX_OK в out лежит список, оканчивающийся
 // TOK_EOF; его нужно освободить через token_list_free. При ошибке out пуст
 LexStatus lex(const char *input, TokenList *out);
-
 bool lex_status_is_incomplete(LexStatus status);
-
 const char *lex_status_message(LexStatus status);
 
+void *xmalloc(size_t size);
+void *xrealloc(void *ptr, size_t size);
+char *xstrdup(const char *s);
 #endif 
