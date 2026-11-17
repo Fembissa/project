@@ -2,7 +2,7 @@
 //
 // Внешняя программа: fork создаёт копию процесса, в копии execve заменяет образ на программу,
 // родитель ждёт её (waitpid). Встроенные команды (cd, exit ...) выполняются в самом shell:
-// иначе изменился бы только дочерний процесс. Функции идут снизу вверх, exec_node - в конце.
+// иначе изменился бы только дочерний процесс. Главная функция - первая, вспомогательные ниже.
 
 #include "exec.h"
 #include <errno.h>
@@ -17,12 +17,49 @@
 #include "lexer.h"
 
 extern char **environ; // окружение: дочерний процесс получает такое же
-// коды возврата (ТЗ)
+// коды возврата 
 enum { ST_FAIL = 1, ST_CANNOT_EXEC = 126, ST_NOT_FOUND = 127, ST_SIGNAL = 128 };
 #define DEFAULT_PATH "/usr/local/bin:/usr/bin:/bin" // если PATH не задан
 #define UNUSED [[maybe_unused]]
 #define err(...) fprintf(stderr, "mysh: " __VA_ARGS__)
 typedef int (*BuiltinFn)(Shell *sh, int argc, char **argv);
+
+// вспомогательные функции определены ниже
+static BuiltinFn find_builtin(const char *name);
+static int exec_builtin(Shell *sh, const SimpleCommand *s, BuiltinFn fn);
+static int exec_job(Shell *sh, const Node *node, bool bg);
+// главная функция
+int exec_node(Shell *sh, const Node *node){
+    const Sequence *s = &node->seq; // для PIPELINE, ANDOR, LIST
+    int st;
+    switch (node->type) {
+    case NODE_SIMPLE: {
+        BuiltinFn fn = find_builtin(node->simple.argv[0]);
+        return fn ? exec_builtin(sh, &node->simple, fn) : exec_job(sh, node, false);
+    }
+    case NODE_SUBSHELL: // ( список ) всегда в отдельном процессе
+    case NODE_PIPELINE:
+        return exec_job(sh, node, false);
+    case NODE_ANDOR: // слева направо; следующая команда пропускается, если по коду не нужна
+        st = exec_node(sh, s->items[0]);
+        for (size_t i = 0; i + 1 < s->count && !sh->exit_requested; i++) {
+            sh->last_status = st;
+            if (s->ops[i] == OP_AND ? st == 0 : st != 0)
+                st = exec_node(sh, s->items[i + 1]);
+        }
+        return st;
+    case NODE_LIST: // команды по очереди; пустой список код не меняет
+        st = sh->last_status;
+        for (size_t i = 0; i < s->count && !sh->exit_requested; i++) {
+            while (waitpid(-1, NULL, WNOHANG) > 0) // подбираем завершившиеся фоновые процессы
+                ;
+            st = s->ops[i] == OP_BG ? exec_job(sh, s->items[i], true) : exec_node(sh, s->items[i]);
+            sh->last_status = st;
+        }
+        return st;
+    }
+    return ST_FAIL;
+}
 
 // закрывает дескриптор (отрицательный пропускается), об ошибке сообщает
 static void close_fd(int fd){
@@ -294,39 +331,4 @@ static int exec_job(Shell *sh, const Node *node, bool bg){
     }
     free(pids);
     return status;
-}
-
-int exec_node(Shell *sh, const Node *node){
-    const Sequence *s = &node->seq; // для PIPELINE, ANDOR, LIST
-    int st;
-
-    switch (node->type) {
-    case NODE_SIMPLE: {
-        BuiltinFn fn = find_builtin(node->simple.argv[0]);
-        return fn ? exec_builtin(sh, &node->simple, fn) : exec_job(sh, node, false);
-    }
-    case NODE_SUBSHELL: // ( список ) всегда в отдельном процессе
-
-    case NODE_PIPELINE:
-      return exec_job(sh, node, false);
-    case NODE_ANDOR: // слева направо; следующая команда пропускается, если по коду не нужна
-        st = exec_node(sh, s->items[0]);
-        for (size_t i = 0; i + 1 < s->count && !sh->exit_requested; i++) {
-            sh->last_status = st;
-            if (s->ops[i] == OP_AND ? st == 0 : st != 0)
-                st = exec_node(sh, s->items[i + 1]);  
-        }
-
-    return st;
-    case NODE_LIST: // команды по очереди; пустой список код не меняет
-        st = sh->last_status;
-        for (size_t i = 0; i < s->count && !sh->exit_requested; i++) {
-            while (waitpid(-1, NULL, WNOHANG) > 0) // подбираем завершившиеся фоновые процессы
-                ;
-            st = s->ops[i] == OP_BG ? exec_job(sh, s->items[i], true) : exec_node(sh, s->items[i]);
-            sh->last_status = st;
-        }
-        return st;
-    }
-    return ST_FAIL;
 }
