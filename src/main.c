@@ -20,7 +20,7 @@ typedef enum {
 
 // Обрабатывает одну команду: лексер -> (парсер) -> печать.
 // При CMD_INCOMPLETE и CMD_ERROR в err лежит текст ошибки.
-static CmdStatus process_command(const char *text, Mode mode, char *err)
+static CmdStatus process_command(const char *text, Mode mode, char *err, Shell *sh)
 {
     TokenList tokens;
     LexStatus ls = lex(text, &tokens);
@@ -42,9 +42,13 @@ static CmdStatus process_command(const char *text, Mode mode, char *err)
         snprintf(err, ERROR_LEN, "%s", perr.message);
         return perr.incomplete ? CMD_INCOMPLETE : CMD_ERROR;
     }
+    if (mode == MODE_DUMP_AST) {
+        ast_dump(root, stdout);
+        node_free(root);
+        return CMD_OK;
+    }
 
-    int exit_code = exec_node(root);
-    (void)exit_code;
+    sh->last_status = exec_node(sh, root);
     node_free(root);
     return CMD_OK;
 }
@@ -67,38 +71,33 @@ int main(int argc, char **argv)
         }
     }
 
-    if (mode == MODE_NONE) {
-        fprintf(stderr, "mysh: only --dump-tokens and --dump-ast "
-                        "are implemented so far\n");
-        return EXIT_FAILURE;
-    }
-
+    // Разрешаем выполнение, если mode == MODE_NONE (обычный запуск / -c)
+    Shell sh = {0};
     char err[ERROR_LEN] = "";
     CmdStatus st = CMD_OK;
+
     if (command != NULL) {
-        st = process_command(command, mode, err); // режим -c: одна команда
+        st = process_command(command, mode, err, &sh);
     } else {
-        // Читаем stdin построчно. Если ввод не закончен (незакрытая кавычка,
-        // '\' в конце строки), дописываем следующую строку к той же команде.
         char *line = NULL;
         size_t line_cap = 0;
-        char *input = NULL; // накопленный текст команды
+        char *input = NULL;
         size_t input_len = 0;
 
-        while (getline(&line, &line_cap, stdin) != -1) {
+        while (!sh.exit_requested && getline(&line, &line_cap, stdin) != -1) {
             size_t n = strlen(line);
             input = xrealloc(input, input_len + n + 1);
             memcpy(input + input_len, line, n + 1);
             input_len += n;
 
-            st = process_command(input, mode, err);
+            st = process_command(input, mode, err, &sh);
             if (st == CMD_INCOMPLETE)
-                continue; // команда не закончена: читаем следующую строку
+                continue;
             if (st == CMD_ERROR)
                 break;
-            input_len = 0; // команда разобрана, начинаем новую
+            input_len = 0;
         }
-        if (ferror(stdin)) { // внутренняя ошибка чтения
+        if (ferror(stdin)) {
             perror("mysh: stdin");
             exit(EXIT_FAILURE);
         }
@@ -106,10 +105,10 @@ int main(int argc, char **argv)
         free(input);
     }
 
-    if (st != CMD_OK) { // включая ввод, оборвавшийся посреди команды
+    if (st != CMD_OK) {
         fprintf(stderr, "mysh: %s\n", err);
         return EXIT_SYNTAX;
     }
 
-    return EXIT_SUCCESS;
+    return sh.last_status;
 }
